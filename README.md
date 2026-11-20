@@ -10,8 +10,11 @@ Zig version: `0.17.1`.
 Clone and run: `zig build run -Doptimize=fast`.
 
 `WASD` -> move
+
 `HJKL` -> rotate camera
+
 `<Space>` -> fly up
+
 `<q>` -> fly down
 
 ## Screenshots
