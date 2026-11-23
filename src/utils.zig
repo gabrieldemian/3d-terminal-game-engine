@@ -10,7 +10,7 @@ pub const Vec3 = @Vector(3, f32);
 pub const Vec4 = @Vector(4, f32);
 pub const RGB = Vec3;
 
-const light = norm(Vec3{ 0, 0, -1 });
+const light = norm(Vec3{ 0, 0, -0.0001 });
 const camera = Vec3{ 0, 0, 0 };
 
 /// Backface culling.
@@ -37,9 +37,21 @@ pub inline fn normdot(p: Vec3, v0: Vec3, v1: Vec3, v2: Vec3) f32 {
     return dot(normal(v0, v1, v2), norm(p - v0));
 }
 
-/// Return luminescence of triangle between 0.0..1.0
+/// Return luminescence of triangle between 0.2..1.0
 pub inline fn lumi(v0: anytype, v1: anytype, v2: anytype) @TypeOf(v0) {
-    return @splat(math.clamp(normdot(light, v0, v1, v2), 0.3, 0.9));
+    return @splat(math.clamp(normdot(light, v0, v1, v2), 0.2, 1.0));
+}
+
+const inv_centroid = Vec3{ 1, 1, 1 } / Vec3{ 3, 3, 3 };
+
+/// Return luminescence of triangle between 0.2..0.9.
+/// As if a light were pointing from the camera towards -Z.
+pub inline fn lumi2(v0: Vec3, v1: Vec3, v2: Vec3) Vec3 {
+    return @splat(math.clamp(
+        dot(norm((v0 + v1 + v2) * inv_centroid), light),
+        0.2,
+        0.9,
+    ));
 }
 
 /// From NDC (-1 to 1) space to screen space/view space.

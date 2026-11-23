@@ -56,7 +56,7 @@ pub const Mesh = struct {
         const c0 = utils.project(tri[0], term.aspect);
         const c1 = utils.project(tri[1], term.aspect);
         const c2 = utils.project(tri[2], term.aspect);
-        const light = utils.lumi(tri[0], tri[1], tri[2]);
+        const light = utils.lumi2(tri[0], tri[1], tri[2]);
         const ndcs = utils.clip(c0, c1, c2);
 
         var i: usize = 0;
