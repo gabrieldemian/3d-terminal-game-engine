@@ -1,9 +1,13 @@
 const std = @import("std");
 const Io = std.Io;
+const clamp = std.math.clamp;
 const mem = std.mem;
 const print = std.debug.print;
 const expect = std.testing.expect;
 const root = @import("root");
+const Vec4 = root.Vec4;
+const Vec3 = root.Vec3;
+const Vec2 = root.Vec2;
 
 const zigimg = @import("zigimg");
 
@@ -11,8 +15,6 @@ const colors = @import("colors.zig");
 const term = @import("term.zig");
 const utils = @import("utils.zig");
 
-pub const Vec3 = @Vector(3, f32);
-pub const Vec2 = @Vector(2, f32);
 const MeshKind = enum(u8) { texture, no_texture };
 
 var mesh_textures: [255]MeshTexture = undefined;
@@ -56,13 +58,21 @@ pub const Mesh = struct {
         const c0 = utils.project(tri[0], term.aspect);
         const c1 = utils.project(tri[1], term.aspect);
         const c2 = utils.project(tri[2], term.aspect);
+
         const light = utils.lumi2(tri[0], tri[1], tri[2]);
         const ndcs = utils.clip(c0, c1, c2);
 
-        var i: usize = 0;
-        while (i + 2 < ndcs.len) : (i += 3) {
+        const ori0 = utils.screen_space(utils.to_ndc(c0));
+        const ori1 = utils.screen_space(utils.to_ndc(c1));
+        const ori2 = utils.screen_space(utils.to_ndc(c2));
+
+        for (0..ndcs.len / 3) |_i| {
+            const i = _i * 3;
             switch (self.kind) {
                 .no_texture => Mesh.rasterize_notexture(
+                    ori0,
+                    ori1,
+                    ori2,
                     utils.screen_space(ndcs[i + 0]),
                     utils.screen_space(ndcs[i + 1]),
                     utils.screen_space(ndcs[i + 2]),
@@ -70,6 +80,9 @@ pub const Mesh = struct {
                     light,
                 ),
                 .texture => mesh_textures[self.extra_index].rasterize(
+                    ori0,
+                    ori1,
+                    ori2,
                     utils.screen_space(ndcs[i + 0]),
                     utils.screen_space(ndcs[i + 1]),
                     utils.screen_space(ndcs[i + 2]),
@@ -81,11 +94,20 @@ pub const Mesh = struct {
         }
     }
 
-    fn rasterize_notexture(v0: Vec3, v1: Vec3, v2: Vec3, buf: []u8, light: Vec3) void {
-        const x_min: i32 = @floor(@min(v0[0], v1[0], v2[0]));
-        const x_max: i32 = @ceil(@max(v0[0], v1[0], v2[0]));
-        const y_min: i32 = @floor(@min(v0[1], v1[1], v2[1]));
-        const y_max: i32 = @ceil(@max(v0[1], v1[1], v2[1]));
+    fn rasterize_notexture(
+        c0: Vec4,
+        c1: Vec4,
+        c2: Vec4,
+        v0: Vec4,
+        v1: Vec4,
+        v2: Vec4,
+        buf: []u8,
+        light: Vec3,
+    ) void {
+        const x_min = @max(@as(i32, @floor(@min(v0[0], v1[0], v2[0]))), -term.half_cols);
+        const x_max = @min(@as(i32, @ceil(@max(v0[0], v1[0], v2[0]))), term.half_cols);
+        const y_min = @max(@as(i32, @floor(@min(v0[1], v1[1], v2[1]))), -term.half_rows);
+        const y_max = @min(@as(i32, @ceil(@max(v0[1], v1[1], v2[1]))), term.half_rows);
 
         var topleft = Vec3{ @floatFromInt(x_min), @floatFromInt(y_min), 0 };
         topleft += @splat(0.5);
@@ -97,37 +119,54 @@ pub const Mesh = struct {
         };
 
         const inv_area = 1.0 / utils.edge_cross(v0, v1, v2);
+        const inv_area_vec = @as(Vec3, @splat(inv_area));
+
         var wleft = (Vec3{
             utils.edge_cross(v1, v2, topleft),
             utils.edge_cross(v2, v0, topleft),
             utils.edge_cross(v0, v1, topleft),
-        } + bias); // divide by area for true bary and remove inv_area
+        } + bias);
 
         const dw_dx = Vec3{ v1[1] - v2[1], v2[1] - v0[1], v0[1] - v1[1] };
         const dw_dy = Vec3{ v2[0] - v1[0], v0[0] - v2[0], v1[0] - v0[0] };
+        const zs = Vec3{ v0[2], v1[2], v2[2] };
 
-        const dz_dx = (dw_dx[0] * v0[2] + dw_dx[1] * v1[2] + dw_dx[2] * v2[2]) * inv_area;
-        const dz_dy = (dw_dy[0] * v0[2] + dw_dy[1] * v1[2] + dw_dy[2] * v2[2]) * inv_area;
+        const dz_dx = @reduce(.Add, dw_dx * zs * inv_area_vec);
+        const dz_dy = @reduce(.Add, dw_dy * zs * inv_area_vec);
+        var z_left = @reduce(.Add, wleft * zs * inv_area_vec);
 
-        var z_left = (wleft[0] * v0[2] + wleft[1] * v1[2] + wleft[2] * v2[2]) * inv_area;
+        const L = Vec3{ 1.0 / c0[3], 1.0 / c1[3], 1.0 / c2[3] };
+
         var y = y_min;
-
         while (y < y_max) : (y += 1) {
             const row_start = @as(usize, @intCast(term.half_rows - 1 - y)) * term.cols;
             var x = x_min;
             var w = wleft;
             var z = z_left;
 
-            while (x < x_max) : (x += 1) {
-                if (w[0] >= 0 and w[1] >= 0 and w[2] >= 0) {
-                    const col: usize = @intCast(term.half_cols + x);
-                    if (z < root.zbuf_raw[row_start + col]) {
-                        root.zbuf_raw[row_start + col] = z;
-                        term.put_cell_bg(buf, row_start + col, @round(colors.GREY * light));
-                    }
-                }
+            while (x < x_max) : ({
+                x += 1;
                 w += dw_dx;
                 z += dz_dx;
+            }) {
+                if (w[0] < 0 or w[1] < 0 or w[2] < 0) {
+                    continue;
+                }
+                const col: usize = @intCast(term.half_cols + x);
+                if (z >= root.zbuf_raw[row_start + col]) {
+                    continue;
+                }
+                root.zbuf_raw[row_start + col] = z;
+                const wparent = utils.bary(c0, c1, c2, Vec2{
+                    @as(f32, @floatFromInt(x)) + 0.5,
+                    @as(f32, @floatFromInt(y)) + 0.5,
+                });
+                const wpersp = wparent * L;
+                const persp = wpersp * @as(Vec3, @splat(1 / @reduce(.Add, wpersp)));
+                _ = persp; // autofix
+                // const color = persp * colors.WHITE * light;
+                const color = colors.GREY * light;
+                term.put_cell_bg(buf, row_start + col, color);
             }
             wleft += dw_dy;
             z_left += dz_dy;
@@ -176,17 +215,20 @@ pub const MeshTexture = struct {
 
     pub fn rasterize(
         self: MeshTexture,
-        v0: Vec3,
-        v1: Vec3,
-        v2: Vec3,
+        c0: Vec4,
+        c1: Vec4,
+        c2: Vec4,
+        v0: Vec4,
+        v1: Vec4,
+        v2: Vec4,
         start_face_i: usize,
         buf: []u8,
         light: Vec3,
     ) void {
-        const x_min: i32 = @floor(@min(v0[0], v1[0], v2[0]));
-        const x_max: i32 = @ceil(@max(v0[0], v1[0], v2[0]));
-        const y_min: i32 = @floor(@min(v0[1], v1[1], v2[1]));
-        const y_max: i32 = @ceil(@max(v0[1], v1[1], v2[1]));
+        const x_min = @max(@as(i32, @floor(@min(v0[0], v1[0], v2[0]))), -term.half_cols);
+        const x_max = @min(@as(i32, @ceil(@max(v0[0], v1[0], v2[0]))), term.half_cols);
+        const y_min = @max(@as(i32, @floor(@min(v0[1], v1[1], v2[1]))), -term.half_rows);
+        const y_max = @min(@as(i32, @ceil(@max(v0[1], v1[1], v2[1]))), term.half_rows);
 
         var topleft = Vec3{ @floatFromInt(x_min), @floatFromInt(y_min), 0 };
         topleft += @splat(0.5);
@@ -198,6 +240,7 @@ pub const MeshTexture = struct {
         };
 
         const inv_area = 1.0 / utils.edge_cross(v0, v1, v2);
+        const inv_area_vec = @as(Vec3, @splat(inv_area));
         var wleft = (Vec3{
             utils.edge_cross(v1, v2, topleft),
             utils.edge_cross(v2, v0, topleft),
@@ -207,11 +250,11 @@ pub const MeshTexture = struct {
         const dw_dx = Vec3{ v1[1] - v2[1], v2[1] - v0[1], v0[1] - v1[1] };
         const dw_dy = Vec3{ v2[0] - v1[0], v0[0] - v2[0], v1[0] - v0[0] };
 
-        const dz_dx = (dw_dx[0] * v0[2] + dw_dx[1] * v1[2] + dw_dx[2] * v2[2]) * inv_area;
-        const dz_dy = (dw_dy[0] * v0[2] + dw_dy[1] * v1[2] + dw_dy[2] * v2[2]) * inv_area;
+        const zs = Vec3{ v0[2], v1[2], v2[2] };
 
-        var z_left = (wleft[0] * v0[2] + wleft[1] * v1[2] + wleft[2] * v2[2]) * inv_area;
-        var y = y_min;
+        const dz_dx = @reduce(.Add, dw_dx * zs * inv_area_vec);
+        const dz_dy = @reduce(.Add, dw_dy * zs * inv_area_vec);
+        var z_left = @reduce(.Add, wleft * zs * inv_area_vec);
 
         const uv0 = self.uv[self.face_uvs[start_face_i + 0]];
         const uv1 = self.uv[self.face_uvs[start_face_i + 1]];
@@ -221,30 +264,39 @@ pub const MeshTexture = struct {
         const us = Vec3{ uv0[0], uv1[0], uv2[0] };
         const vs = Vec3{ uv0[1], uv1[1], uv2[1] };
 
+        // clip space Ws
+        const L = Vec3{ 1.0 / c0[3], 1.0 / c1[3], 1.0 / c2[3] };
+
+        var y = y_min;
         while (y < y_max) : (y += 1) {
             const row_start = @as(usize, @intCast(term.half_rows - 1 - y)) * term.cols;
             var x = x_min;
             var w = wleft;
             var z = z_left;
 
-            while (x < x_max) : (x += 1) {
-                if (w[0] >= 0 and w[1] >= 0 and w[2] >= 0) {
-                    const col: usize = @intCast(term.half_cols + x);
-                    if (z < root.zbuf_raw[row_start + col]) {
-                        root.zbuf_raw[row_start + col] = z;
-                        const u = @reduce(.Add, w * us) * inv_area;
-                        const v = @reduce(.Add, w * vs) * inv_area;
-                        const pixel = sample(Vec2{ u, v }, self.img);
-                        const color = @round(Vec3{
-                            pixel.r * 255,
-                            pixel.g * 255,
-                            pixel.b * 255,
-                        } * light);
-                        term.put_cell_bg(buf, row_start + col, color);
-                    }
-                }
+            while (x < x_max) : ({
+                x += 1;
                 w += dw_dx;
                 z += dz_dx;
+            }) {
+                if (w[0] < 0 or w[1] < 0 or w[2] < 0) {
+                    continue;
+                }
+                const col: usize = @intCast(term.half_cols + x);
+                if (z >= root.zbuf_raw[row_start + col]) {
+                    continue;
+                }
+                root.zbuf_raw[row_start + col] = z;
+                const wparent = utils.bary(c0, c1, c2, Vec2{
+                    @as(f32, @floatFromInt(x)) + 0.5,
+                    @as(f32, @floatFromInt(y)) + 0.5,
+                });
+                const wpersp = wparent * L;
+                const denom = 1 / @reduce(.Add, wpersp);
+                const u = @reduce(.Add, wpersp * us) * denom;
+                const v = @reduce(.Add, wpersp * vs) * denom;
+                const pixel = sample(Vec2{ u, v }, self.img);
+                term.put_cell_bg(buf, row_start + col, pixel * light);
             }
             wleft += dw_dy;
             z_left += dz_dy;
@@ -454,11 +506,16 @@ fn parse_with_texture(
     };
 }
 
-inline fn sample(uv: Vec2, img: zigimg.Image) zigimg.color.Colorf32 {
+inline fn sample(uv_: Vec2, img: zigimg.Image) colors.RGB {
+    const uv = clamp(uv_, Vec2{ 0, 0 }, Vec2{ 1, 1 });
     const uv_wh = uv * Vec2{ @floatFromInt(img.width), @floatFromInt(img.height) };
+    const tx = @min(@as(usize, @trunc(uv_wh[0])), img.width - 1);
+    const ty = @min(@as(usize, @trunc(uv_wh[1])), img.height - 1);
     // flip Y because in UV 0 is bottom
-    const ty = img.height - 1 - @as(usize, @trunc(uv_wh[1]));
-    return img.pixels.float32[ty * img.width + @as(usize, @trunc(uv_wh[0]))];
+    const y = img.height - 1 - ty;
+    const pixel = img.pixels.float32[y * img.width + tx];
+    // 0..1 -> 0..255
+    return Vec3{ pixel.r, pixel.g, pixel.b } * colors.WHITE;
 }
 
 test "parse" {

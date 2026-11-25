@@ -41,11 +41,11 @@ pub fn put_clear_cell(buf: []u8, i: usize) void {
 }
 
 pub fn put_cell_fg(buf: []u8, i: usize, rgb: colors.RGB, char: u8) void {
-    put_cell(buf, i, rgb, char, .fg);
+    put_cell(buf, i, @round(rgb), char, .fg);
 }
 
 pub fn put_cell_bg(buf: []u8, i: usize, rgb: colors.RGB) void {
-    put_cell(buf, i, rgb, ' ', .bg);
+    put_cell(buf, i, std.math.clamp(@round(rgb), colors.BLACK, colors.WHITE), ' ', .bg);
 }
 
 pub fn raw_mode() !void {

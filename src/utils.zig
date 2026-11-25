@@ -16,8 +16,7 @@ const camera = Vec3{ 0, 0, 0 };
 /// Backface culling.
 /// Returns true if the triangle should be culled.
 pub inline fn backface_cull(v0: Vec3, v1: Vec3, v2: Vec3) bool {
-    const n = cross(v1 - v0, v2 - v0);
-    return dot(n, camera - v0) < 0;
+    return dot(cross(v1 - v0, v2 - v0), camera - v0) < 0;
 }
 
 /// Backface culling in NDC space.
@@ -55,8 +54,13 @@ pub inline fn lumi2(v0: Vec3, v1: Vec3, v2: Vec3) Vec3 {
 }
 
 /// From NDC (-1 to 1) space to screen space/view space.
-pub inline fn screen_space(ndc: Vec3) Vec3 {
-    return ndc * term.halfcolsrows;
+pub inline fn screen_space(ndc: Vec4) Vec4 {
+    return Vec4{
+        ndc[0] * term.halfcolsrows[0],
+        ndc[1] * term.halfcolsrows[1],
+        ndc[2],
+        ndc[3],
+    };
 }
 
 /// Project from world space to clip space.
@@ -82,7 +86,7 @@ pub fn project(v: Vec3, aspect: f32) Vec4 {
     return .{ xc, yc, zc, w };
 }
 
-var clipbuf: [24]Vec3 = undefined;
+var clipbuf: [24]Vec4 = undefined;
 
 const Plane = struct { axis: u2, sign: f32 };
 
@@ -98,10 +102,11 @@ const planes = [_]Plane{
     // zig fmt: on
 };
 
+/// Returns the vertex count for `dst`.
 fn clip_plane(src: []const Vec4, dst: []Vec4, pl: Plane) usize {
     if (src.len == 0) return 0;
 
-    var n: usize = 0;
+    var vert_count: usize = 0;
     var prev = src[src.len - 1];
     const prev_arr: [4]f32 = prev;
     var dprev = pl.sign * prev_arr[pl.axis] + prev_arr[3];
@@ -114,32 +119,34 @@ fn clip_plane(src: []const Vec4, dst: []Vec4, pl: Plane) usize {
         const t: Vec4 = @splat(dprev / (dprev - dcurr));
 
         if (pin and cin) {
-            dst[n] = curr;
-            n += 1;
+            dst[vert_count] = curr;
+            vert_count += 1;
         } else if (pin and !cin) {
-            dst[n] = prev + t * (curr - prev);
-            n += 1;
+            dst[vert_count] = prev + t * (curr - prev);
+            vert_count += 1;
         } else if (!pin and cin) {
-            dst[n] = prev + t * (curr - prev);
-            n += 1;
-            dst[n] = curr;
-            n += 1;
+            dst[vert_count] = prev + t * (curr - prev);
+            vert_count += 1;
+            dst[vert_count] = curr;
+            vert_count += 1;
         }
         prev = curr;
         dprev = dcurr;
     }
-    return n;
+    return vert_count;
 }
 
+var clip_a: [12]Vec4 = undefined;
+
 // Clip a triangle in clip space to NDC [-1 1] and Z [0 1].
-pub fn clip(c0: Vec4, c1: Vec4, c2: Vec4) []Vec3 {
-    var a: [12]Vec4 = undefined;
-    a[0] = c0;
-    a[1] = c1;
-    a[2] = c2;
+// Where the last value is `1/w`.
+pub fn clip(c0: Vec4, c1: Vec4, c2: Vec4) []Vec4 {
+    clip_a[0] = c0;
+    clip_a[1] = c1;
+    clip_a[2] = c2;
     var b: [12]Vec4 = undefined;
     var len: usize = 3;
-    var src: []Vec4 = &a;
+    var src: []Vec4 = &clip_a;
     var dst: []Vec4 = &b;
 
     for (planes) |pl| {
@@ -150,15 +157,9 @@ pub fn clip(c0: Vec4, c1: Vec4, c2: Vec4) []Vec3 {
         dst = t;
     }
 
-    var ndc: [12]Vec3 = undefined;
+    var ndc: [12]Vec4 = undefined;
     for (0..len) |i| {
-        const v = src[i];
-        ndc[i] = .{
-            // clamp to make sure its always in bounds to NDC
-            math.clamp(v[0] / v[3], -1.0, 1.0),
-            math.clamp(v[1] / v[3], -1.0, 1.0),
-            math.clamp(v[2] / v[3], -1.0, 1.0),
-        };
+        ndc[i] = to_ndc(src[i]);
     }
 
     // fan triangulate
@@ -169,6 +170,16 @@ pub fn clip(c0: Vec4, c1: Vec4, c2: Vec4) []Vec3 {
         clipbuf[3 * i + 2] = ndc[i + 2];
     }
     return clipbuf[0 .. tris * 3];
+}
+
+pub fn to_ndc(v: Vec4) Vec4 {
+    const iw = 1 / v[3];
+    return .{
+        v[0] * iw,
+        v[1] * iw,
+        v[2] * iw,
+        v[3],
+    };
 }
 
 pub fn move_z(v: Vec3, d: f32) Vec3 {
@@ -222,18 +233,18 @@ pub inline fn dot(a: anytype, b: anytype) f32 {
 
 /// Return a positive number if `p` is on the left side of `a` and `b`
 pub inline fn edge_cross(a: anytype, b: anytype, p: anytype) f32 {
-    const ab = b - a;
-    const ap = p - a;
+    const ab = Vec2{ b[0], b[1] } - Vec2{ a[0], a[1] };
+    const ap = Vec2{ p[0], p[1] } - Vec2{ a[0], a[1] };
     return ab[0] * ap[1] - ab[1] * ap[0];
 }
 
 /// Barycentric coordinates
-pub fn bary(v0: Vec2, v1: Vec2, v2: Vec2, p: Vec2) Vec3 {
-    const area: Vec3 = @splat(edge_cross(v0, v1, v2) / 1);
-    const alpha = edge_cross(v1, v2, p) / 1;
-    const beta = edge_cross(v2, v0, p) / 1;
-    const gamma = edge_cross(v0, v1, p) / 1;
-    return Vec3{ alpha, beta, gamma } / area;
+pub fn bary(v0: anytype, v1: anytype, v2: anytype, p: Vec2) Vec3 {
+    const inv_area: Vec3 = @splat(1 / edge_cross(v0, v1, v2));
+    const alpha = edge_cross(v1, v2, p);
+    const beta = edge_cross(v2, v0, p);
+    const gamma = edge_cross(v0, v1, p);
+    return Vec3{ alpha, beta, gamma } * inv_area;
 }
 
 test "cull" {

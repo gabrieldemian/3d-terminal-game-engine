@@ -1,3 +1,17 @@
+const std = @import("std");
+const Io = std.Io;
+
+const zigimg = @import("zigimg");
+
+const colors = @import("colors.zig");
+const key = @import("key.zig");
+const mesh = @import("mesh.zig");
+const Mesh = mesh.Mesh;
+const term = @import("term.zig");
+const utils = @import("utils.zig");
+const yaw = utils.yaw;
+const pitch = utils.pitch;
+
 pub const Vec2 = @Vector(2, f32);
 pub const Vec3 = @Vector(3, f32);
 pub const Vec4 = @Vector(4, f32);
@@ -68,7 +82,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var meshes = [_]Mesh{
-        try mesh.Mesh.open(
+        try Mesh.open(
             "mountains.obj",
             init.arena,
             init.io,
@@ -258,64 +272,3 @@ inline fn draw_line3(v0: anytype, v1: anytype, v2: anytype, buf: []u8, rgb: colo
     draw_line(v1, v2, buf, rgb);
     draw_line(v2, v0, buf, rgb);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const std = @import("std");
-const Io = std.Io;
-const math = std.math;
-const print = std.debug.print;
-const posix = std.posix;
-const expect = std.testing.expect;
-
-const zigimg = @import("zigimg");
-
-const colors = @import("colors.zig");
-const key = @import("key.zig");
-const mesh = @import("mesh.zig");
-const Mesh = mesh.Mesh;
-const term = @import("term.zig");
-const utils = @import("utils.zig");
-const normal = utils.normal;
-const yaw = utils.yaw;
-const pitch = utils.pitch;
-const magnitude = utils.magnitude;
-const dot = utils.dot;
-const project = utils.project;
-const screen_space = utils.screen_space;
-
