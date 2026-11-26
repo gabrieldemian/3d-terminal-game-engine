@@ -24,23 +24,16 @@ var cleared_framebuf: [framebuf.len - buf_extra]u8 = undefined;
 pub var zbuf_raw: [300 * 150]f32 = undefined;
 var stdinbuf: [100]u8 = undefined;
 var raw_vertex_buf: [4096 * 10]Vec3 = undefined;
-var is_benchmarking = false;
 
 pub fn main(init: std.process.Init) !void {
     const stdout = Io.File.stdout();
     const stdin = Io.File.stdin();
 
-    if (is_benchmarking) {
-        term.handle_signals();
-    }
-
-    defer if (!is_benchmarking) term.deinit(stdout, init.io) catch {};
-    if (!is_benchmarking) {
-        try term.raw_mode();
-        try term.init(stdout, init.io);
-        term.resize(stdout);
-    }
-    defer if (!is_benchmarking) term.leave_raw_mode() catch {};
+    defer term.deinit(stdout, init.io) catch {};
+    try term.raw_mode();
+    try term.init(stdout, init.io);
+    term.resize(stdout);
+    defer term.leave_raw_mode() catch {};
 
     framebuf[0..buf_extra].* = [buf_extra]u8{ 0x1b, '[', 'H' };
     var buf =
@@ -114,7 +107,7 @@ pub fn main(init: std.process.Init) !void {
         out_len += mesh_.mesh.len;
     }
     var vertex_buf = raw_vertex_buf[0..out_len];
-    var cull_meshes: [3]bool = @splat(true);
+    var dirty = true;
 
     while (!should_quit.load(.acquire)) {
         if (should_resize.swap(false, .seq_cst)) {
@@ -125,6 +118,7 @@ pub fn main(init: std.process.Init) !void {
             for (0..zbuf.len) |i| {
                 term.put_clear_cell(cleared, i);
             }
+            dirty = true;
         }
         const fr_until_now = last.untilNow(init.io, clock);
         const dt_ns = last.untilNow(init.io, clock).toNanoseconds();
@@ -132,10 +126,6 @@ pub fn main(init: std.process.Init) !void {
         const dt = @as(f32, @floatFromInt(dt_ns)) / 1_000_000_000;
         const now = clock.now(init.io);
         last = now;
-
-        @memcpy(buf, cleared);
-        @memset(zbuf, 1);
-        @memset(&cull_meshes, true);
 
         const stdin_len = stdin.readStreaming(
             init.io,
@@ -167,6 +157,7 @@ pub fn main(init: std.process.Init) !void {
         const d = move_per_sec * dt;
         inline for (0.., @typeInfo(@TypeOf(curr_keys_down)).@"struct".field_names) |i, n| {
             if (@field(curr_keys_down, n)) {
+                dirty = true;
                 switch (i) {
                     0 => translate += yaw(Vec3{ 0, 0, d }, rotation[0]),
                     1 => translate += yaw(Vec3{ d, 0, 0 }, rotation[0]),
@@ -189,17 +180,17 @@ pub fn main(init: std.process.Init) !void {
 
         // "move camera" by transforming the meshes.
         // simulate movement and camera rotation.
-        {
+        if (dirty) {
+            @memcpy(buf, cleared);
+            @memset(zbuf, 1);
+
             var vi: usize = 0;
-            for (meshes, 0..) |mesh_, mi| {
+            for (meshes) |mesh_| {
                 for (0..mesh_.mesh.len) |i| {
                     vertex_buf[vi] = pitch(
                         yaw(mesh_.mesh[i] + translate + mesh_.translate, -rotation[0]),
                         -rotation[1],
                     );
-                    if (mesh_.mesh[i][2] < 0) {
-                        cull_meshes[mi] = false;
-                    }
                     vi += 1;
                 }
             }
@@ -208,12 +199,10 @@ pub fn main(init: std.process.Init) !void {
         // draw things on the screen
         // world space -> backface cull -> project (clip space, divide, NDC)
         // -> clip -> screen space 2D -> rasterize
-        {
+        if (dirty) {
+            dirty = false;
             var out_skip: usize = 0;
-            for (meshes, 0..) |mesh_, mi| {
-                if (cull_meshes[mi]) {
-                    continue;
-                }
+            for (meshes) |mesh_| {
                 for (0..mesh_.faces.len / 3) |face_i| {
                     const face_start = 3 * face_i;
                     const tri = [_]Vec3{
@@ -221,10 +210,7 @@ pub fn main(init: std.process.Init) !void {
                         vertex_buf[out_skip..][mesh_.faces[face_start + 1]],
                         vertex_buf[out_skip..][mesh_.faces[face_start + 2]],
                     };
-                    if (tri[0][2] > 0 and
-                        tri[1][2] > 0 and
-                        tri[2][2] > 0)
-                    {
+                    if (tri[0][2] > 0 and tri[1][2] > 0 and tri[2][2] > 0) {
                         continue;
                     }
                     mesh_.rasterize(face_start, tri, buf);
@@ -252,12 +238,7 @@ pub fn main(init: std.process.Init) !void {
             term.put_cell_fg(buf, i, colors.RED, '0' + num);
         }
 
-        if (!is_benchmarking) {
-            try stdout.writeStreamingAll(init.io, framebuf[0 .. buf.len + buf_extra]);
-        }
-        if (is_benchmarking and frames == 1_000) {
-            should_quit.store(true, .release);
-        }
+        try stdout.writeStreamingAll(init.io, framebuf[0 .. buf.len + buf_extra]);
     }
 }
 
@@ -291,16 +272,3 @@ inline fn draw_line3(v0: anytype, v1: anytype, v2: anytype, buf: []u8, rgb: colo
     draw_line(v1, v2, buf, rgb);
     draw_line(v2, v0, buf, rgb);
 }
-
-// Benchmark 1: ./zig-out/bin/terminal_engine (10 runs)
-//                        mean     ±       σ          min     …     max
-//   Wall Time           434.9 ms  ±     4.9 ms     429.5 ms  …   442.4 ms
-//   CPU time            434.2 ms  ±     5.0 ms     428.7 ms  …   441.8 ms
-//   User time           426.3 ms  ±     5.4 ms     415.3 ms  …   435.0 ms
-//   System time           7.9 ms  ±     3.4 ms       2.0 ms  …    14.0 ms
-//   Memory               66.3 MiB ±     1.3 MiB     64.3 MiB …    68.0 MiB
-//   CPU cycles            1.6 B   ±     0.0 B        1.6 B   …     1.6 B
-//   Instructions          4.9 B   ±     0.0 B        4.9 B   …     4.9 B
-//   Cache references    753.2 k   ±     7.3 k      745.6 k   …   768.0 k
-//   Cache misses        124.1 k   ±    33.0 k       90.0 k   …   204.9 k
-//   Branch misses         7.8 M   ±     0.0 M        7.8 M   …     7.9 M

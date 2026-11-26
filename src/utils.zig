@@ -1,7 +1,6 @@
 const std = @import("std");
 const math = std.math;
 const expect = std.testing.expect;
-const root = @import("root");
 
 const term = @import("term.zig");
 

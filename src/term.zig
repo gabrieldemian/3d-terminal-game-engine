@@ -14,6 +14,7 @@ pub var half_cols: i32 = 0;
 pub var half_rows: i32 = 0;
 
 pub var halfcolsrows = utils.Vec3{ 1, 1, 1 };
+pub var halfcolsrows2 = utils.Vec2{ 1, 1 };
 pub var colsrows = utils.Vec2{ 1, 1 };
 pub var aspect: f32 = 8;
 
@@ -117,6 +118,10 @@ pub fn resize(stdout: std.Io.File) void {
         half_cols = cols / 2;
         half_rows = rows / 2;
         halfcolsrows = .{ @floatFromInt(half_cols), @floatFromInt(half_rows), 1 };
+        halfcolsrows2 = .{
+            @floatFromInt(half_cols), @floatFromInt(half_rows),
+            // @floatFromInt(half_cols), @floatFromInt(half_rows),
+        };
         colsrows = .{ @floatFromInt(cols), @floatFromInt(rows) };
         aspect = colsrows[0] / (colsrows[1] * 2);
     }
