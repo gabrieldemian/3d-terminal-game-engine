@@ -3,6 +3,7 @@ const posix = std.posix;
 const root = @import("root");
 
 const colors = @import("colors.zig");
+const utils = @import("utils.zig");
 
 const ColorType = enum(u8) { fg = '3', bg = '4' };
 
@@ -12,8 +13,8 @@ pub var rows: u16 = 1;
 pub var half_cols: i32 = 0;
 pub var half_rows: i32 = 0;
 
-pub var halfcolsrows = root.Vec3{ 1, 1, 1 };
-pub var colsrows = root.Vec2{ 1, 1 };
+pub var halfcolsrows = utils.Vec3{ 1, 1, 1 };
+pub var colsrows = utils.Vec2{ 1, 1 };
 pub var aspect: f32 = 8;
 
 pub const terminal_scale = root.Vec3{ 0.5, 0.5, 1 };

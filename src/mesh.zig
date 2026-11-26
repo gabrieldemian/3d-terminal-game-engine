@@ -5,15 +5,15 @@ const mem = std.mem;
 const print = std.debug.print;
 const expect = std.testing.expect;
 const root = @import("root");
-const Vec4 = root.Vec4;
-const Vec3 = root.Vec3;
-const Vec2 = root.Vec2;
 
 const zigimg = @import("zigimg");
 
 const colors = @import("colors.zig");
 const term = @import("term.zig");
 const utils = @import("utils.zig");
+const Vec4 = utils.Vec4;
+const Vec3 = utils.Vec3;
+const Vec2 = utils.Vec2;
 
 const MeshKind = enum(u8) { texture, no_texture };
 
@@ -312,6 +312,12 @@ fn open_texture(
     var read_buffer: [zigimg.io.DEFAULT_BUFFER_SIZE]u8 = undefined;
     var image = try zigimg.Image.fromFilePath(arena.allocator(), io, name, &read_buffer);
     try image.convert(arena.allocator(), .float32);
+    for (image.pixels.float32) |*px| {
+        // 0..1 -> 0..255
+        px.*.r *= 255;
+        px.*.g *= 255;
+        px.*.b *= 255;
+    }
     return image;
 }
 
@@ -514,8 +520,7 @@ inline fn sample(uv_: Vec2, img: zigimg.Image) colors.RGB {
     // flip Y because in UV 0 is bottom
     const y = img.height - 1 - ty;
     const pixel = img.pixels.float32[y * img.width + tx];
-    // 0..1 -> 0..255
-    return Vec3{ pixel.r, pixel.g, pixel.b } * colors.WHITE;
+    return Vec3{ pixel.r, pixel.g, pixel.b };
 }
 
 test "parse" {

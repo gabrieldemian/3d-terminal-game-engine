@@ -8,7 +8,6 @@ const term = @import("term.zig");
 pub const Vec2 = @Vector(2, f32);
 pub const Vec3 = @Vector(3, f32);
 pub const Vec4 = @Vector(4, f32);
-pub const RGB = Vec3;
 
 const light = norm(Vec3{ 0, 0, -0.0001 });
 const camera = Vec3{ 0, 0, 0 };
@@ -63,6 +62,10 @@ pub inline fn screen_space(ndc: Vec4) Vec4 {
     };
 }
 
+pub const ClipSpace = struct { c: Vec3, w: f32 };
+pub const NDCSpace = struct { c: Vec3, w: f32 };
+pub const ViewSpace = struct { c: Vec3, w: f32 };
+
 /// Project from world space to clip space.
 /// OpenGL symmetric matrix.
 /// After perspective divide NDC: lr [-1 1] bt [-1 1] nf [0 1]
@@ -84,6 +87,7 @@ pub fn project(v: Vec3, aspect: f32) Vec4 {
     const w = -v[2];
 
     return .{ xc, yc, zc, w };
+    // return ClipSpace{ .c = Vec3{ xc, yc, zc }, .w = w };
 }
 
 var clipbuf: [24]Vec4 = undefined;
@@ -141,6 +145,10 @@ var clip_a: [12]Vec4 = undefined;
 // Clip a triangle in clip space to NDC [-1 1] and Z [0 1].
 // Where the last value is `1/w`.
 pub fn clip(c0: Vec4, c1: Vec4, c2: Vec4) []Vec4 {
+    if (inside_frustum(c0, c1, c2)) {
+        clipbuf[0..3].* = .{ to_ndc(c0), to_ndc(c1), to_ndc(c2) };
+        return clipbuf[0..3];
+    }
     clip_a[0] = c0;
     clip_a[1] = c1;
     clip_a[2] = c2;
@@ -170,6 +178,20 @@ pub fn clip(c0: Vec4, c1: Vec4, c2: Vec4) []Vec4 {
         clipbuf[3 * i + 2] = ndc[i + 2];
     }
     return clipbuf[0 .. tris * 3];
+}
+
+/// If a point is fully inside the plane.
+inline fn inside(pl: Plane, v: Vec4) bool {
+    return pl.sign * v[pl.axis] + v[3] >= 0;
+}
+
+/// Cheaper to check if the entire triangle is inside the frustum
+/// before clipping, which is the case most of the times.
+inline fn inside_frustum(c0: Vec4, c1: Vec4, c2: Vec4) bool {
+    inline for (planes) |pl| {
+        if (!inside(pl, c0) or !inside(pl, c1) or !inside(pl, c2)) return false;
+    }
+    return true;
 }
 
 pub fn to_ndc(v: Vec4) Vec4 {
